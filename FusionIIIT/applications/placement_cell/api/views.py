@@ -8,35 +8,41 @@ from django.contrib.auth.models import User
 from django.http import JsonResponse
 from django.core.files.storage import FileSystemStorage
 from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from ..models import *
 from applications.academic_information.models import Student
 from .serializers import PlacementScheduleSerializer, NotifyStudentSerializer
 import json
 
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import permissions
-from django.http import JsonResponse
-
+@method_decorator(csrf_exempt, name='dispatch')
 class PlacementScheduleView(APIView):
     permission_classes = [permissions.AllowAny]
 
-    def get(self, request):
-        combined_data = []
+    def get(self, request, id=None): 
+        if id:
+            try:
+                notify_schedule = NotifyStudent.objects.get(id=id)
+                placement_schedule = PlacementSchedule.objects.get(notify_id=notify_schedule)
+                combined_entry = {**NotifyStudentSerializer(notify_schedule).data, **PlacementScheduleSerializer(placement_schedule).data}
+                return Response(combined_entry, status=status.HTTP_200_OK)
+            except NotifyStudent.DoesNotExist:
+                return Response({"error": "NotifyStudent not found"}, status=status.HTTP_404_NOT_FOUND)
+            except PlacementSchedule.DoesNotExist:
+                return Response({"error": "PlacementSchedule not found"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            combined_data = []
+            notify_students = NotifyStudent.objects.all()
+            for notify in notify_students:
+                placements = PlacementSchedule.objects.filter(notify_id=notify.id)
+                placement_serializer = PlacementScheduleSerializer(placements, many=True)
+                notify_data = NotifyStudentSerializer(notify).data
 
-        notify_students = NotifyStudent.objects.all()
-        for notify in notify_students:
-            placements = PlacementSchedule.objects.filter(notify_id=notify.id)
-            placement_serializer = PlacementScheduleSerializer(placements, many=True)
-            notify_data = NotifyStudentSerializer(notify).data
+                for placement in placement_serializer.data:
+                    combined_entry = {**notify_data, **placement}
+                    combined_data.append(combined_entry)
 
-            for placement in placement_serializer.data:
-                combined_entry = {**notify_data, **placement}
-                combined_data.append(combined_entry)
-
-        return Response(combined_data)
-
+            return Response(combined_data, status=status.HTTP_200_OK)
+        
     def post(self, request):
         placement_type = request.data.get("placement_type")
         company_name = request.data.get("company_name")
@@ -70,12 +76,63 @@ class PlacementScheduleView(APIView):
             )
 
 
+
             return redirect('placement')
 
             return JsonResponse({"message": "Successfully Added Schedule"}, status=201)
 
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
+    
+    def delete(self, request, id):
+        try:
+            notify_schedule = NotifyStudent.objects.get(id=id)
+            placement_schedule = PlacementSchedule.objects.get(notify_id=notify_schedule)
+            notify_schedule.delete()
+            placement_schedule.delete()
+
+            return JsonResponse({"message": "Successfully Deleted"}, status=200)
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)
+        
+    def put(self, request, id):
+        try:
+            notify_schedule = NotifyStudent.objects.get(id=id)
+            placement_schedule = PlacementSchedule.objects.get(notify_id=notify_schedule)
+
+            placement_type = request.data.get("placement_type", notify_schedule.placement_type)
+            company_name = request.data.get("company_name", notify_schedule.company_name)
+            ctc = request.data.get("ctc", notify_schedule.ctc)
+            description = request.data.get("description", notify_schedule.description)
+            schedule_at = request.data.get("schedule_at", notify_schedule.timestamp)
+            date = request.data.get("placement_date", placement_schedule.placement_date)
+            location = request.data.get("location", placement_schedule.location)
+            role = request.data.get("role", placement_schedule.role)
+            resume = request.FILES.get("resume", placement_schedule.attached_file)
+
+            notify_schedule.placement_type = placement_type
+            notify_schedule.company_name = company_name
+            notify_schedule.ctc = ctc
+            notify_schedule.description = description
+            notify_schedule.timestamp = schedule_at
+            notify_schedule.save()
+
+            placement_schedule.title = company_name
+            placement_schedule.description = description
+            placement_schedule.placement_date = date
+            placement_schedule.location = location
+            placement_schedule.attached_file = resume
+            placement_schedule.time = schedule_at
+            placement_schedule.role = Role.objects.get(role=role) if role else placement_schedule.role
+            placement_schedule.save()
+
+            return JsonResponse({"message": "Successfully Updated"}, status=200)
+        
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)
+            
+    
 
 
 
@@ -172,6 +229,7 @@ class BatchStatisticsView(APIView):
         return Response(combined_data, status=status.HTTP_200_OK)
 
 
+
     def post(self,request):
         placement_type=request.POST.get("placement_type")
         company_name=request.POST.get("company_name")
@@ -198,15 +256,36 @@ class BatchStatisticsView(APIView):
     
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
-            
+    
+    def put(self, request, record_id):
+        try:
+            placement_record = PlacementRecord.objects.get(id=record_id)
+            placement_record.placement_type = request.data.get("placement_type", placement_record.placement_type)
+            placement_record.name = request.data.get("company_name", placement_record.name)
+            placement_record.ctc = request.data.get("ctc", placement_record.ctc)
+            placement_record.year = request.data.get("year", placement_record.year)
+            placement_record.test_score = request.data.get("test_score", placement_record.test_score)
+            placement_record.test_type = request.data.get("test_type", placement_record.test_type)
+            placement_record.save()
 
+            return JsonResponse({"message": "Successfully Updated"}, status=200)
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)
     
 
+    def delete(self, request, record_id):
+        try:
+            placement_record = PlacementRecord.objects.get(id=record_id)
+            student_record = StudentRecord.objects.get(record_id=placement_record)
+            student_record.delete()
+            placement_record.delete()
 
+            return JsonResponse({"message": "Successfully Deleted"}, status=200)
 
-
-
-
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)
+    
 
 
 
