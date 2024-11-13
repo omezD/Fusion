@@ -399,3 +399,29 @@ class StudentPlacement(models.Model):
 
     def __str__(self):
         return self.unique_id.id.id
+
+
+
+class NextRoundInfo(models.Model):
+    schedule_id = models.ForeignKey(PlacementSchedule, on_delete=models.CASCADE)
+    round_no = models.IntegerField(default=1)
+    test_type = models.CharField(max_length=20,default="Interview")
+    test_date = models.DateField(_("Date"),  null=True, blank=True)
+    description = models.CharField(max_length=200 ,null=True, blank=True)
+
+    def __str__(self):
+        return f'Round {self.round_no}: {self.test_type} on {self.test_date}'
+
+
+class StudentApplication(models.Model):
+    schedule_id = models.ForeignKey(PlacementSchedule, on_delete=models.CASCADE)
+    unique_id = models.ForeignKey(Student, on_delete=models.CASCADE)
+    current_status = models.CharField(max_length=20,default="Pending")
+
+    class Meta:
+        unique_together = (('schedule_id', 'unique_id'),)
+
+    def __str__(self):
+        return '{} - {}'.format(self.unique_id.id, self.schedule_id.title)
+    
+    

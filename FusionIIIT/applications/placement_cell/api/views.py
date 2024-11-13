@@ -1,18 +1,23 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-
 from django.shortcuts import get_object_or_404, redirect, render
-
 from rest_framework import status,permissions
+from rest_framework.decorators import api_view,permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
 from django.contrib.auth.models import User
-from django.http import JsonResponse
+from django.http import JsonResponse,HttpResponse
 from django.core.files.storage import FileSystemStorage
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from ..models import *
 from applications.academic_information.models import Student
+from applications.globals.models import ExtraInfo
 from .serializers import PlacementScheduleSerializer, NotifyStudentSerializer
-import json
+from applications.academic_information.api.serializers import StudentSerializers
+import datetime
+import io
+from reportlab.pdfgen import canvas
 
 @method_decorator(csrf_exempt, name='dispatch')
 class PlacementScheduleView(APIView):
@@ -38,9 +43,14 @@ class PlacementScheduleView(APIView):
                 notify_data = NotifyStudentSerializer(notify).data
 
                 for placement in placement_serializer.data:
-                    combined_entry = {**notify_data, **placement}
+                    counting = StudentApplication.objects.filter(schedule_id_id=placement['id'],unique_id_id=request.user.username).count()
+                    check = "True"
+                    if counting==0:
+                        check="False" 
+                    print(check)
+                    combined_entry = {**notify_data, **placement ,'check':check}
                     combined_data.append(combined_entry)
-
+            
             return Response(combined_data, status=status.HTTP_200_OK)
         
     def post(self, request):
@@ -135,55 +145,6 @@ class PlacementScheduleView(APIView):
     
 
 
-
-
-@csrf_exempt
-def placement_schedule_save(request):
-    permission_classes = [permissions.AllowAny]
-    if request.method != "POST":
-        return JsonResponse({"error": "Method Not Allowed"}, status=405)
-
-    placement_type = request.POST.get("placement_type")
-    company_name = request.POST.get("company_name")
-    ctc = request.POST.get("ctc")
-    description = request.POST.get("description")
-    timestamp = request.POST.get("time_stamp")
-    title = request.POST.get("title")
-    location = request.POST.get("location")
-    role = request.POST.get("role")
-    
-    resume = request.FILES.get("resume")
-    schedule_at = request.POST.get("schedule_at")
-    date = request.POST.get("placement_date")
-
-    try:
-        role_create, _ = Role.objects.get_or_create(role=role)
-        
-        notify = NotifyStudent.objects.create(
-            placement_type=placement_type,
-            company_name=company_name,
-            description=description,
-            ctc=ctc,
-            timestamp=timestamp
-        )
-
-        schedule = PlacementSchedule.objects.create(
-            notify_id=notify,
-            title=company_name,
-            description=description,
-            placement_date=date,
-            attached_file=resume,
-            role=role_create,
-            location=location,
-            time=schedule_at
-        )
-
-        return JsonResponse({"message": "Successfully Added Schedule"}, status=201)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
-
-
-
 class BatchStatisticsView(APIView):
 
     permission_classes = [permissions.AllowAny]
@@ -209,7 +170,7 @@ class BatchStatisticsView(APIView):
                     "placement_name": cur_placement.name,  
                     "ctc": cur_placement.ctc, 
                     "year": cur_placement.year, 
-                    "first_name": user.first_name 
+                    "first_name": user.first_name,
                 }
 
                 combined_data.append(combined_entry)
@@ -286,6 +247,236 @@ class BatchStatisticsView(APIView):
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
     
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])  
+def generate_cv(request):
+    fields = request.data
+    user = request.user  
+
+    if user.is_authenticated:
+        profile = get_object_or_404(ExtraInfo, user=user)
+    else:
+        return Response({"error": "User not authenticated"}, status=401)
+
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer)
+
+    y_position = 800  
+    p.drawString(100, y_position, f"CV for {user.get_full_name()}")
+    y_position -= 20
+
+    if fields.get("education", False):
+        p.drawString(100, y_position, "Education:")
+        y_position -= 15
+        for edu in Education.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {edu.degree} from {edu.institute}")
+            y_position -= 15
+
+    if fields.get("achievements", False):
+        p.drawString(100, y_position, "Achievements:")
+        y_position -= 15
+        for ach in Achievement.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {ach.description}")
+            y_position -= 15
+    
+    if fields.get("skills", False):
+        p.drawString(100, y_position, "Skills:")
+        y_position -= 15
+        for skil in Has.objects.filter(unique_id=profile.id):
+            skill_name = Skill.objects.get(id=skil.skill_id_id)
+            p.drawString(100, y_position, f"- {skill_name.skill}")
+            y_position -= 15
+
+    p.showPage()
+    p.save()
+    buffer.seek(0)
+    response = HttpResponse(buffer, content_type="application/pdf")
+    response['Content-Disposition'] = 'attachment; filename="student_cv.pdf"'
+    return response
+
+
+@permission_classes([IsAuthenticated]) 
+class ApplyForPlacement(APIView):
+    def post(self,request):
+        user = request.user
+        profile = get_object_or_404(ExtraInfo, user=user)
+        student = Student.objects.get(id_id=profile.id)
+        placement_id = request.data.get('placementId')
+        placement = PlacementSchedule.objects.get(id=placement_id)
+        print(f"User: {user}, Profile: {profile}, Student: {student}, Placement ID: {placement_id}") 
+
+        try:
+            application = StudentApplication.objects.create(
+                schedule_id = placement,
+                unique_id = student,
+                current_status = "Pending",
+            )
+
+
+            return JsonResponse({"message": "Successfully Applied"}, status=201)
+
+        except Exception as e:
+            print(f"Error creating application: {str(e)}")
+            return JsonResponse({"error": str(e)}, status=400)
+        
+
+    def get(self, request, id):
+        schedule = get_object_or_404(PlacementSchedule, id=id)  
+        applications = StudentApplication.objects.filter(schedule_id=schedule)
+
+        students_data = []
+        for application in applications:
+            roll_no = application.unique_id_id
+            student = get_object_or_404(Student, id_id=roll_no)
+            user = get_object_or_404(User, username=roll_no)
+
+            students_data.append({
+                'name': f"{user.first_name} {user.last_name}",
+                'roll_no': roll_no,
+                'email': user.email,
+                'cpi': student.cpi,
+                'status': application.current_status,
+            })
+
+        return Response({'students': students_data}, status=200)
+    
+    def put(self, request, application_id):
+        application = get_object_or_404(StudentApplication, id=application_id)
+
+        new_status = request.data.get('status')
+        if new_status is None:  
+            return JsonResponse({"error": "Status is required"}, status=400)
+
+        try:
+            application.current_status = new_status
+            application.save()
+            return JsonResponse({"message": "Status updated successfully"}, status=200)
+
+        except Exception as e:
+            print(f"Error updating application status: {str(e)}")
+            return JsonResponse({"error": str(e)}, status=400)
+    
+@permission_classes([IsAuthenticated])
+class NextRoundDetails(APIView):
+    def post(self,request,id):
+        placement = PlacementSchedule.objects.get(id=id)
+        round_no = request.data.get('round_no')
+        test_type = request.data.get('test_type')
+        test_date = request.data.get('test_date')
+        description = request.data.get('description')
+
+        try:
+            next_round = NextRoundInfo.objects.create(
+                schedule_id = placement,
+                round_no = round_no,
+                test_type = test_type,
+                test_date = test_date,
+                description = description,
+            )
+            return JsonResponse({"message": "Successfully Created"}, status=201)
+
+        except Exception as e:
+            print(f"Error creating round: {str(e)}")
+            return JsonResponse({"error": str(e)}, status=400)
+        
+    def get(self,request):
+        user = request.user
+        next_data=[]
+        if user.username=='omvir':
+            next_round_data = NextRoundInfo.objects.all()
+            for nr in next_round_data:
+                try:
+                    schedule = PlacementSchedule.objects.get(id=nr.schedule_id_id)
+                    print("Valid Schedule:", schedule.title) 
+                except PlacementSchedule.DoesNotExist:
+                    print("No schedule found for schedule_id:", nr.schedule_id_id)
+                next_data.append({
+                    'company_name':schedule.title,
+                    'date':nr.test_date,
+                    'type':nr.test_type,
+                    'round':nr.round_no,
+                    'description':nr.description,
+                })
+
+        else:
+            profile = get_object_or_404(ExtraInfo, user=user)
+            roll_no = profile.id
+            applications = StudentApplication.objects.filter(unique_id_id=roll_no)
+        
+            for application in applications:
+                next_round_data = NextRoundInfo.objects.filter(schedule_id=application.schedule_id)
+                for nr in next_round_data:
+                    next_data.append({
+                        'company_name':application.schedule_id.title,
+                        'date':nr.test_date,
+                        'type':nr.test_type,
+                        'round':nr.round_no,
+                        'description':nr.description,
+                    })
+        
+        return Response({'schedule_data': next_data}, status=200)
+    
+
+    def put(self, request, round_id):
+        next_round = get_object_or_404(NextRoundInfo, id=round_id)
+
+        round_no = request.data.get('round_no')
+        test_type = request.data.get('test_type')
+        test_date = request.data.get('test_date')
+        description = request.data.get('description')
+
+        try:
+            if round_no is not None:
+                next_round.round_no = round_no
+            if test_type is not None:
+                next_round.test_type = test_type
+            if test_date is not None:
+                next_round.test_date = test_date
+            if description is not None:
+                next_round.description = description
+
+            next_round.save()
+
+            return JsonResponse({"message": "Successfully Updated"}, status=200)
+
+        except Exception as e:
+            print(f"Error updating round: {str(e)}")
+            return JsonResponse({"error": str(e)}, status=400)
+
+
+
+
+class TrackStatus(APIView):
+    def get(self,request,id):
+        user = request.user
+        profile = get_object_or_404(ExtraInfo, user=user)
+        roll_no = profile.id
+        application = StudentApplication.objects.get(unique_id_id=roll_no, schedule_id_id=id)
+        data = []
+
+        if application.current_status != 'rejected':
+            rounds = NextRoundInfo.objects.filter(schedule_id_id=id).order_by('round_no')
+            round_count = rounds.count()
+
+            for round_info in rounds[:round_count - 1]: 
+                data.append({
+                    'round_no': round_info.round_no,
+                    'test_name': round_info.test_type,
+                })
+
+            if round_count > 0:
+                last_round_info = rounds[round_count - 1]
+                data.append({
+                    'round_no': last_round_info.round_no,
+                    'test_name': last_round_info.test_type,
+                    'test_date': last_round_info.test_date,
+                    'description': last_round_info.description,
+                })
+
+        return Response({'next_data': data}, status=200)
+
+
 
 
 
