@@ -85,10 +85,6 @@ class PlacementScheduleView(APIView):
                 time=schedule_at,
             )
 
-
-
-            return redirect('placement')
-
             return JsonResponse({"message": "Successfully Added Schedule"}, status=201)
 
         except Exception as e:
@@ -134,7 +130,7 @@ class PlacementScheduleView(APIView):
             placement_schedule.location = location
             placement_schedule.attached_file = resume
             placement_schedule.time = schedule_at
-            placement_schedule.role = Role.objects.get(role=role) if role else placement_schedule.role
+            placement_schedule.role = Role.objects.get(id=role) if role else placement_schedule.role
             placement_schedule.save()
 
             return JsonResponse({"message": "Successfully Updated"}, status=200)
@@ -302,7 +298,7 @@ class ApplyForPlacement(APIView):
         user = request.user
         profile = get_object_or_404(ExtraInfo, user=user)
         student = Student.objects.get(id_id=profile.id)
-        placement_id = request.data.get('placementId')
+        placement_id = request.data.get('jobId')
         placement = PlacementSchedule.objects.get(id=placement_id)
         print(f"User: {user}, Profile: {profile}, Student: {student}, Placement ID: {placement_id}") 
 
@@ -321,24 +317,27 @@ class ApplyForPlacement(APIView):
             return JsonResponse({"error": str(e)}, status=400)
         
 
-    def get(self, request, id):
+    def get(self, request,id):
         schedule = get_object_or_404(PlacementSchedule, id=id)  
-        applications = StudentApplication.objects.filter(schedule_id=schedule)
+        applications = StudentApplication.objects.filter(schedule_id_id=schedule.id)
+        print(schedule.id)
 
         students_data = []
         for application in applications:
             roll_no = application.unique_id_id
+            print(roll_no)
             student = get_object_or_404(Student, id_id=roll_no)
             user = get_object_or_404(User, username=roll_no)
 
             students_data.append({
+                'id':application.id,
                 'name': f"{user.first_name} {user.last_name}",
                 'roll_no': roll_no,
                 'email': user.email,
                 'cpi': student.cpi,
                 'status': application.current_status,
             })
-
+        print(students_data)
         return Response({'students': students_data}, status=200)
     
     def put(self, request, application_id):
