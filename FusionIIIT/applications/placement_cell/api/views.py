@@ -18,10 +18,11 @@ from applications.academic_information.api.serializers import StudentSerializers
 import datetime
 import io
 from reportlab.pdfgen import canvas
+from openpyxl import Workbook
 
 @method_decorator(csrf_exempt, name='dispatch')
+@permission_classes([IsAuthenticated])
 class PlacementScheduleView(APIView):
-    permission_classes = [permissions.AllowAny]
 
     def get(self, request, id=None): 
         if id:
@@ -44,11 +45,11 @@ class PlacementScheduleView(APIView):
 
                 for placement in placement_serializer.data:
                     counting = StudentApplication.objects.filter(schedule_id_id=placement['id'],unique_id_id=request.user.username).count()
-                    check = "True"
+                    role_st = Role.objects.get(id=placement['role'])
+                    check = True
                     if counting==0:
-                        check="False" 
-                    print(check)
-                    combined_entry = {**notify_data, **placement ,'check':check}
+                        check=False
+                    combined_entry = {**notify_data, **placement ,'check':check ,'role_st':role_st.role}
                     combined_data.append(combined_entry)
             
             return Response(combined_data, status=status.HTTP_200_OK)
@@ -92,8 +93,8 @@ class PlacementScheduleView(APIView):
     
     def delete(self, request, id):
         try:
-            notify_schedule = NotifyStudent.objects.get(id=id)
-            placement_schedule = PlacementSchedule.objects.get(notify_id=notify_schedule)
+            placement_schedule = PlacementSchedule.objects.get(id=id)
+            notify_schedule = NotifyStudent.objects.get(id=placement_schedule.notify_id_id)
             notify_schedule.delete()
             placement_schedule.delete()
 
@@ -104,8 +105,9 @@ class PlacementScheduleView(APIView):
         
     def put(self, request, id):
         try:
-            notify_schedule = NotifyStudent.objects.get(id=id)
-            placement_schedule = PlacementSchedule.objects.get(notify_id=notify_schedule)
+            placement_schedule = PlacementSchedule.objects.get(id=id)
+            notify_schedule = NotifyStudent.objects.get(id=placement_schedule.notify_id_id)
+
 
             placement_type = request.data.get("placement_type", notify_schedule.placement_type)
             company_name = request.data.get("company_name", notify_schedule.company_name)
@@ -140,10 +142,8 @@ class PlacementScheduleView(APIView):
             
     
 
-
+@permission_classes([IsAuthenticated]) 
 class BatchStatisticsView(APIView):
-
-    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         combined_data = []
@@ -283,6 +283,107 @@ def generate_cv(request):
             skill_name = Skill.objects.get(id=skil.skill_id_id)
             p.drawString(100, y_position, f"- {skill_name.skill}")
             y_position -= 15
+            p.drawString(100, y_position, f"- {skil.skill_rating}")
+            y_position -= 15
+
+    if fields.get("references", False):
+        p.drawString(100, y_position, "References:")
+        y_position -= 15
+        for ref in Reference.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {ref.email}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {ref.mobile_number}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {ref.post}")
+            y_position -= 15
+
+    if fields.get("conferences", False):
+        p.drawString(100, y_position, "conferences:")
+        y_position -= 15
+        for conf in Conference.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {conf.conference_name}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {conf.sdate} - {conf.edate}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {conf.description}")
+            y_position -= 15
+    
+    if fields.get("patents", False):
+        p.drawString(100, y_position, "patents:")
+        y_position -= 15
+        for pat in Patent.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {pat.patent_name}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pat.description}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pat.patent_office}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pat.patent_date}")
+            y_position -= 15
+    
+    if fields.get("publications", False):
+        p.drawString(100, y_position, "publications:")
+        y_position -= 15
+        for pub in Publication.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {pub.publication_title}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pub.publisher} - {pub.publication_date}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pub.description}")
+            y_position -= 15
+
+    if fields.get("experience", False):
+        p.drawString(100, y_position, "experience:")
+        y_position -= 15
+        for exp in Experience.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {exp.title}-{exp.status}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {exp.company}-{exp.location}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {exp.sdate} - {exp.edate}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {exp.description}")
+            y_position -= 15
+
+    if fields.get("projects", False):
+        p.drawString(100, y_position, "projects:")
+        y_position -= 15
+        for pro in Project.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {pro.project_name} - {pro.project_status}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pro.sdate} - {pro.edate}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pro.summary}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {pro.project_link}")
+            y_position -= 15
+
+    if fields.get("extracurriculars", False):
+        p.drawString(100, y_position, "extracurriculars:")
+        y_position -= 15
+        for ext in Extracurricular.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {ext.event_type}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {ext.event_name} - {ext.name_of_position}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {ext.date_earned}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {ext.description}")
+            y_position -= 15
+
+    if fields.get("courses", False):
+        p.drawString(100, y_position, "courses:")
+        y_position -= 15
+        for course in Course.objects.filter(unique_id=profile.id):
+            p.drawString(100, y_position, f"- {course.course_name}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {course.sdate} - {course.edate}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {course.description}")
+            y_position -= 15
+            p.drawString(100, y_position, f"- {course.license_no}")
+            y_position -= 15
+    
 
     p.showPage()
     p.save()
@@ -306,7 +407,7 @@ class ApplyForPlacement(APIView):
             application = StudentApplication.objects.create(
                 schedule_id = placement,
                 unique_id = student,
-                current_status = "Pending",
+                current_status = "accept",
             )
 
 
@@ -340,8 +441,8 @@ class ApplyForPlacement(APIView):
         print(students_data)
         return Response({'students': students_data}, status=200)
     
-    def put(self, request, application_id):
-        application = get_object_or_404(StudentApplication, id=application_id)
+    def put(self, request, id):
+        application = get_object_or_404(StudentApplication, id=id)
 
         new_status = request.data.get('status')
         if new_status is None:  
@@ -350,16 +451,17 @@ class ApplyForPlacement(APIView):
         try:
             application.current_status = new_status
             application.save()
+            print('changed')
             return JsonResponse({"message": "Status updated successfully"}, status=200)
 
         except Exception as e:
             print(f"Error updating application status: {str(e)}")
             return JsonResponse({"error": str(e)}, status=400)
     
+
 @permission_classes([IsAuthenticated])
 class NextRoundDetails(APIView):
     def post(self,request,id):
-        placement = PlacementSchedule.objects.get(id=id)
         round_no = request.data.get('round_no')
         test_type = request.data.get('test_type')
         test_date = request.data.get('test_date')
@@ -367,7 +469,7 @@ class NextRoundDetails(APIView):
 
         try:
             next_round = NextRoundInfo.objects.create(
-                schedule_id = placement,
+                schedule_id_id = id,
                 round_no = round_no,
                 test_type = test_type,
                 test_date = test_date,
@@ -382,7 +484,8 @@ class NextRoundDetails(APIView):
     def get(self,request):
         user = request.user
         next_data=[]
-        if user.username=='omvir':
+        print(user.username)
+        if user.username=='omvir' or user.username=='anilk':
             next_round_data = NextRoundInfo.objects.all()
             for nr in next_round_data:
                 try:
@@ -391,6 +494,7 @@ class NextRoundDetails(APIView):
                 except PlacementSchedule.DoesNotExist:
                     print("No schedule found for schedule_id:", nr.schedule_id_id)
                 next_data.append({
+                    'id':nr.schedule_id_id,
                     'company_name':schedule.title,
                     'date':nr.test_date,
                     'type':nr.test_type,
@@ -401,12 +505,13 @@ class NextRoundDetails(APIView):
         else:
             profile = get_object_or_404(ExtraInfo, user=user)
             roll_no = profile.id
-            applications = StudentApplication.objects.filter(unique_id_id=roll_no)
+            applications = StudentApplication.objects.filter(unique_id_id=roll_no,current_status='accept')
         
             for application in applications:
                 next_round_data = NextRoundInfo.objects.filter(schedule_id=application.schedule_id)
                 for nr in next_round_data:
                     next_data.append({
+                        'id':nr.schedule_id_id,
                         'company_name':application.schedule_id.title,
                         'date':nr.test_date,
                         'type':nr.test_type,
@@ -445,37 +550,125 @@ class NextRoundDetails(APIView):
 
 
 
-
+@permission_classes([IsAuthenticated])
 class TrackStatus(APIView):
     def get(self,request,id):
         user = request.user
         profile = get_object_or_404(ExtraInfo, user=user)
         roll_no = profile.id
-        application = StudentApplication.objects.get(unique_id_id=roll_no, schedule_id_id=id)
+        status='reject'
+        if user.username!='omvir' and user.username!='anilk':
+            application = StudentApplication.objects.get(unique_id_id=roll_no, schedule_id_id=id)
+            status = application.current_status
         data = []
 
-        if application.current_status != 'rejected':
+
+        if user.username=='omvir' or user.username=='anilk' or status != 'reject':
             rounds = NextRoundInfo.objects.filter(schedule_id_id=id).order_by('round_no')
             round_count = rounds.count()
 
-            for round_info in rounds[:round_count - 1]: 
+            if round_count==0:
                 data.append({
-                    'round_no': round_info.round_no,
-                    'test_name': round_info.test_type,
+                    'round_no': 0,
+                    'test_name': 'Yet to be updated',
                 })
+            
+            else:
+                for round_info in rounds[:round_count - 1]: 
+                    data.append({
+                        'round_no': round_info.round_no,
+                        'test_name': round_info.test_type,
+                    })
 
-            if round_count > 0:
-                last_round_info = rounds[round_count - 1]
-                data.append({
-                    'round_no': last_round_info.round_no,
-                    'test_name': last_round_info.test_type,
-                    'test_date': last_round_info.test_date,
-                    'description': last_round_info.description,
-                })
+                if round_count > 0:
+                    last_round_info = rounds[round_count - 1]
+                    data.append({
+                        'round_no': last_round_info.round_no,
+                        'test_name': last_round_info.test_type,
+                        'test_date': last_round_info.test_date,
+                        'description': last_round_info.description,
+                    })
+        
+        else:
+            data.append({
+                'round_no':-1,
+            })
 
         return Response({'next_data': data}, status=200)
 
+@permission_classes([IsAuthenticated])
+class DownloadApplications(APIView):
+    def get(self, request, id):
+        schedule = get_object_or_404(PlacementSchedule, id=id)
+        applications = StudentApplication.objects.filter(schedule_id_id=schedule.id)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Applications"
+
+        headers = ['ID', 'Name', 'Roll Number', 'Email', 'CPI', 'Status']
+        ws.append(headers)
+
+        for application in applications:
+            roll_no = application.unique_id_id
+            student = get_object_or_404(Student, id_id=roll_no)
+            user = get_object_or_404(User, username=roll_no)
+
+            row = [
+                application.id,
+                f"{user.first_name} {user.last_name}",
+                roll_no,
+                user.email,
+                student.cpi,
+                application.current_status,
+            ]
+            ws.append(row)
+
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="applications_{schedule.title}.xlsx"'
+
+        wb.save(response)
+        return response
 
 
+@permission_classes([IsAuthenticated])
+class DownloadStatistics(APIView):
+    def get(self, request):
+        student_records = StudentRecord.objects.all()
 
+        if not student_records.exists():
+            return Response({"error": "No student records found"}, status=status.HTTP_404_NOT_FOUND)
 
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Placement Statistics"
+
+        headers = ['First Name', 'Placement Name', 'Batch', 'Branch', 'CTC', 'Year']
+        ws.append(headers)
+
+        for student in student_records:
+            try:
+                cur_student = Student.objects.get(id_id=student.unique_id_id)
+                cur_placement = PlacementRecord.objects.get(id=student.record_id_id)
+                user = User.objects.get(username=student.unique_id_id)
+
+                row = [
+                    user.first_name,
+                    cur_placement.name,
+                    cur_placement.year,
+                    cur_student.specialization,
+                    cur_placement.ctc,
+                    cur_placement.year,
+                ]
+                ws.append(row)
+
+            except (Student.DoesNotExist, PlacementRecord.DoesNotExist, User.DoesNotExist) as e:
+                continue
+
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="placement_statistics.xlsx"'
+
+        wb.save(response)
+        return response
