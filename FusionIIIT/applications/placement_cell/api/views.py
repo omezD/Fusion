@@ -19,6 +19,12 @@ import datetime
 import io
 from reportlab.pdfgen import canvas
 from openpyxl import Workbook
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,ListFlowable,ListItem
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.graphics.shapes import Line,Drawing
 
 @method_decorator(csrf_exempt, name='dispatch')
 @permission_classes([IsAuthenticated])
@@ -160,9 +166,10 @@ class BatchStatisticsView(APIView):
                 user = User.objects.get(username=student.unique_id_id)
 
                 combined_entry = {
+                    "id": cur_placement.id ,
                     "branch": cur_student.specialization, 
                     "batch" : cur_placement.year, 
-
+                    
                     "placement_name": cur_placement.name,  
                     "ctc": cur_placement.ctc, 
                     "year": cur_placement.year, 
@@ -231,10 +238,10 @@ class BatchStatisticsView(APIView):
             return JsonResponse({"error": str(e)}, status=400)
     
 
-    def delete(self, request, record_id):
+    def delete(self, request, id):
         try:
-            placement_record = PlacementRecord.objects.get(id=record_id)
-            student_record = StudentRecord.objects.get(record_id=placement_record)
+            placement_record = PlacementRecord.objects.get(id=id)
+            student_record = StudentRecord.objects.get(record_id_id=id)
             student_record.delete()
             placement_record.delete()
 
@@ -245,153 +252,148 @@ class BatchStatisticsView(APIView):
     
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])  
+@permission_classes([IsAuthenticated])
+@csrf_exempt
 def generate_cv(request):
     fields = request.data
-    user = request.user  
+    user = request.user
 
-    if user.is_authenticated:
-        profile = get_object_or_404(ExtraInfo, user=user)
-    else:
+    if not user.is_authenticated:
         return Response({"error": "User not authenticated"}, status=401)
 
-    buffer = io.BytesIO()
-    p = canvas.Canvas(buffer)
+    profile = get_object_or_404(Student, id__user=user)
 
-    y_position = 800  
-    p.drawString(100, y_position, f"CV for {user.get_full_name()}")
-    y_position -= 20
+    # Initialize PDF
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        topMargin=20,
+        leftMargin=30,  # Reduced left margin
+        rightMargin=30,  # Reduced right margin
+    )
+
+    # Styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name="Title",
+        parent=styles["Title"],
+        fontSize=18,
+        leading=22,
+        spaceAfter=10,
+        alignment=1,  # Center alignment
+    )
+    section_header_style = ParagraphStyle(
+        name="SectionHeader",
+        parent=styles["Heading2"],
+        fontSize=14,
+        leading=18,
+        spaceAfter=4,  # Reduce space after section header
+        textColor=colors.HexColor("#c43119"),  # Custom color
+    )
+    body_style = styles["BodyText"]
+    body_style.fontSize = 11
+    body_style.leading = 14
+
+    # Helper to format dates
+    def format_date(date):
+        return date.strftime("%d %B %Y") if date else "Ongoing"
+
+    # Content container
+    content = []
+
+    # Add dynamic sections with optional bullet points
+    def add_section(title, queryset, formatter, bullet_points=False):
+        content.append(Paragraph(title, section_header_style))
+        # Add a horizontal line under the section header
+        line = Line(0, 0, 500, 0, strokeColor=colors.HexColor("#c43119"))  # Adjust line length
+        drawing = Drawing(500, 1)  # Adjust drawing width
+        drawing.add(line)
+        content.append(drawing)
+        content.append(Spacer(1, 4))  # Reduce space between header and content
+
+        if bullet_points:
+            # Add items as a bulleted list
+            items = [Paragraph(formatter(obj), body_style) for obj in queryset]
+            content.append(ListFlowable(
+                [ListItem(i) for i in items],
+                bulletType="bullet",  # Use bullets
+                start="circle",  # Specify bullet style
+                leftIndent=10,  # Indent for bullets
+                bulletFontSize=8,  # Decrease bullet size
+                bulletOffset=10,  # Increase space between bullet and text
+            ))
+        else:
+            # Add items normally
+            for obj in queryset:
+                content.append(Paragraph(formatter(obj), body_style))
+        content.append(Spacer(1, 8))  # Reduce space between sections
+
+    # Title
+    content.append(Paragraph(f"{user.get_full_name()}", title_style))
+    content.append(Spacer(1, 8))  # Reduce space after title
+
+    # Dynamic Sections
+    if fields.get("achievements", False):
+        achievements = Achievement.objects.filter(unique_id=profile)
+        add_section(
+            "Achievements",
+            achievements,
+            lambda a: f"{a.achievement} ({a.achievement_type}) - {a.issuer} ({format_date(a.date_earned)})",
+            bullet_points=True,
+        )
 
     if fields.get("education", False):
-        p.drawString(100, y_position, "Education:")
-        y_position -= 15
-        for edu in Education.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {edu.degree} from {edu.institute}")
-            y_position -= 15
+        education = Education.objects.filter(unique_id=profile)
+        add_section(
+            "Education",
+            education,
+            lambda e: f"{e.degree} in {e.stream or 'General'} from {e.institute}, Grade: {e.grade} ({format_date(e.sdate)} - {format_date(e.edate)})"
+        )
 
-    if fields.get("achievements", False):
-        p.drawString(100, y_position, "Achievements:")
-        y_position -= 15
-        for ach in Achievement.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {ach.description}")
-            y_position -= 15
-    
     if fields.get("skills", False):
-        p.drawString(100, y_position, "Skills:")
-        y_position -= 15
-        for skil in Has.objects.filter(unique_id=profile.id):
-            skill_name = Skill.objects.get(id=skil.skill_id_id)
-            p.drawString(100, y_position, f"- {skill_name.skill}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {skil.skill_rating}")
-            y_position -= 15
-
-    if fields.get("references", False):
-        p.drawString(100, y_position, "References:")
-        y_position -= 15
-        for ref in Reference.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {ref.email}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {ref.mobile_number}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {ref.post}")
-            y_position -= 15
-
-    if fields.get("conferences", False):
-        p.drawString(100, y_position, "conferences:")
-        y_position -= 15
-        for conf in Conference.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {conf.conference_name}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {conf.sdate} - {conf.edate}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {conf.description}")
-            y_position -= 15
-    
-    if fields.get("patents", False):
-        p.drawString(100, y_position, "patents:")
-        y_position -= 15
-        for pat in Patent.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {pat.patent_name}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pat.description}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pat.patent_office}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pat.patent_date}")
-            y_position -= 15
-    
-    if fields.get("publications", False):
-        p.drawString(100, y_position, "publications:")
-        y_position -= 15
-        for pub in Publication.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {pub.publication_title}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pub.publisher} - {pub.publication_date}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pub.description}")
-            y_position -= 15
+        skills = Has.objects.filter(unique_id=profile)
+        add_section(
+            "Skills",
+            skills,
+            lambda s: f"{s.skill_id.skill} (Rating: {s.skill_rating}%)",
+            bullet_points=True,
+        )
 
     if fields.get("experience", False):
-        p.drawString(100, y_position, "experience:")
-        y_position -= 15
-        for exp in Experience.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {exp.title}-{exp.status}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {exp.company}-{exp.location}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {exp.sdate} - {exp.edate}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {exp.description}")
-            y_position -= 15
+        experience = Experience.objects.filter(unique_id=profile)
+        add_section(
+            "Experience",
+            experience,
+            lambda e: f"<b>{e.title}</b> at {e.company} ({format_date(e.sdate)} - {format_date(e.edate)})<br/>{e.description or 'No description'}"
+        )
 
     if fields.get("projects", False):
-        p.drawString(100, y_position, "projects:")
-        y_position -= 15
-        for pro in Project.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {pro.project_name} - {pro.project_status}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pro.sdate} - {pro.edate}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pro.summary}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {pro.project_link}")
-            y_position -= 15
-
-    if fields.get("extracurriculars", False):
-        p.drawString(100, y_position, "extracurriculars:")
-        y_position -= 15
-        for ext in Extracurricular.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {ext.event_type}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {ext.event_name} - {ext.name_of_position}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {ext.date_earned}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {ext.description}")
-            y_position -= 15
+        projects = Project.objects.filter(unique_id=profile)
+        add_section(
+            "Projects",
+            projects,
+            lambda p: f"<b>{p.project_name}</b><br/>{p.summary or 'No description'} (Status: {p.project_status})",
+            bullet_points=True,
+        )
 
     if fields.get("courses", False):
-        p.drawString(100, y_position, "courses:")
-        y_position -= 15
-        for course in Course.objects.filter(unique_id=profile.id):
-            p.drawString(100, y_position, f"- {course.course_name}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {course.sdate} - {course.edate}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {course.description}")
-            y_position -= 15
-            p.drawString(100, y_position, f"- {course.license_no}")
-            y_position -= 15
-    
+        courses = Course.objects.filter(unique_id=profile)
+        add_section(
+            "Courses",
+            courses,
+            lambda c: f"{c.course_name} - {c.description or 'No description'} (License: {c.license_no or 'N/A'})",
+            bullet_points=True,
+        )
 
-    p.showPage()
-    p.save()
+    # Build the PDF
+    doc.build(content)
     buffer.seek(0)
-    response = HttpResponse(buffer, content_type="application/pdf")
-    response['Content-Disposition'] = 'attachment; filename="student_cv.pdf"'
-    return response
 
+    # Response
+    response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+    response['Content-Disposition'] = 'attachment; filename="resume.pdf"'
+    return response
 
 @permission_classes([IsAuthenticated]) 
 class ApplyForPlacement(APIView):
