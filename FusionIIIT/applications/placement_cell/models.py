@@ -425,3 +425,9 @@ class StudentApplication(models.Model):
         return '{} - {}'.format(self.unique_id.id, self.schedule_id.title)
     
     
+class DebarStudentInfo(models.Model):
+    unique_id = models.OneToOneField(Student, on_delete=models.CASCADE)
+    description = models.CharField(max_length=500)
+
+    def _str_(self):
+        return self.company_name

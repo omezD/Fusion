@@ -12,10 +12,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from ..models import *
 from applications.academic_information.models import Student
-from applications.globals.models import ExtraInfo
+from applications.globals.models import ExtraInfo, DepartmentInfo
 from .serializers import PlacementScheduleSerializer, NotifyStudentSerializer
 from applications.academic_information.api.serializers import StudentSerializers
-import datetime
+from datetime import datetime
 import io
 from reportlab.pdfgen import canvas
 from openpyxl import Workbook
@@ -25,6 +25,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.graphics.shapes import Line,Drawing
+from rest_framework.test import APIRequestFactory
+
 
 @method_decorator(csrf_exempt, name='dispatch')
 @permission_classes([IsAuthenticated])
@@ -138,7 +140,8 @@ class PlacementScheduleView(APIView):
             placement_schedule.location = location
             placement_schedule.attached_file = resume
             placement_schedule.time = schedule_at
-            placement_schedule.role = Role.objects.get(id=role) if role else placement_schedule.role
+            role_create, _ = Role.objects.get_or_create(role=role)
+            placement_schedule.role = role_create
             placement_schedule.save()
 
             return JsonResponse({"message": "Successfully Updated"}, status=200)
@@ -169,7 +172,7 @@ class BatchStatisticsView(APIView):
                     "id": cur_placement.id ,
                     "branch": cur_student.specialization, 
                     "batch" : cur_placement.year, 
-                    
+
                     "placement_name": cur_placement.name,  
                     "ctc": cur_placement.ctc, 
                     "year": cur_placement.year, 
@@ -251,149 +254,149 @@ class BatchStatisticsView(APIView):
             return JsonResponse({"error": str(e)}, status=400)
     
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-@csrf_exempt
-def generate_cv(request):
-    fields = request.data
-    user = request.user
+@method_decorator(csrf_exempt, name='dispatch')
+class generate_cv(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self,request):
+        fields = request.data
+        user = request.user
 
-    if not user.is_authenticated:
-        return Response({"error": "User not authenticated"}, status=401)
+        if not user.is_authenticated:
+            return Response({"error": "User not authenticated"}, status=401)
 
-    profile = get_object_or_404(Student, id__user=user)
+        profile = get_object_or_404(Student, id__user=user)
 
-    # Initialize PDF
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=letter,
-        topMargin=20,
-        leftMargin=30,  # Reduced left margin
-        rightMargin=30,  # Reduced right margin
-    )
-
-    # Styles
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        name="Title",
-        parent=styles["Title"],
-        fontSize=18,
-        leading=22,
-        spaceAfter=10,
-        alignment=1,  # Center alignment
-    )
-    section_header_style = ParagraphStyle(
-        name="SectionHeader",
-        parent=styles["Heading2"],
-        fontSize=14,
-        leading=18,
-        spaceAfter=4,  # Reduce space after section header
-        textColor=colors.HexColor("#c43119"),  # Custom color
-    )
-    body_style = styles["BodyText"]
-    body_style.fontSize = 11
-    body_style.leading = 14
-
-    # Helper to format dates
-    def format_date(date):
-        return date.strftime("%d %B %Y") if date else "Ongoing"
-
-    # Content container
-    content = []
-
-    # Add dynamic sections with optional bullet points
-    def add_section(title, queryset, formatter, bullet_points=False):
-        content.append(Paragraph(title, section_header_style))
-        # Add a horizontal line under the section header
-        line = Line(0, 0, 500, 0, strokeColor=colors.HexColor("#c43119"))  # Adjust line length
-        drawing = Drawing(500, 1)  # Adjust drawing width
-        drawing.add(line)
-        content.append(drawing)
-        content.append(Spacer(1, 4))  # Reduce space between header and content
-
-        if bullet_points:
-            # Add items as a bulleted list
-            items = [Paragraph(formatter(obj), body_style) for obj in queryset]
-            content.append(ListFlowable(
-                [ListItem(i) for i in items],
-                bulletType="bullet",  # Use bullets
-                start="circle",  # Specify bullet style
-                leftIndent=10,  # Indent for bullets
-                bulletFontSize=8,  # Decrease bullet size
-                bulletOffset=10,  # Increase space between bullet and text
-            ))
-        else:
-            # Add items normally
-            for obj in queryset:
-                content.append(Paragraph(formatter(obj), body_style))
-        content.append(Spacer(1, 8))  # Reduce space between sections
-
-    # Title
-    content.append(Paragraph(f"{user.get_full_name()}", title_style))
-    content.append(Spacer(1, 8))  # Reduce space after title
-
-    # Dynamic Sections
-    if fields.get("achievements", False):
-        achievements = Achievement.objects.filter(unique_id=profile)
-        add_section(
-            "Achievements",
-            achievements,
-            lambda a: f"{a.achievement} ({a.achievement_type}) - {a.issuer} ({format_date(a.date_earned)})",
-            bullet_points=True,
+        # Initialize PDF
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            topMargin=20,
+            leftMargin=30,  # Reduced left margin
+            rightMargin=30,  # Reduced right margin
         )
 
-    if fields.get("education", False):
-        education = Education.objects.filter(unique_id=profile)
-        add_section(
-            "Education",
-            education,
-            lambda e: f"{e.degree} in {e.stream or 'General'} from {e.institute}, Grade: {e.grade} ({format_date(e.sdate)} - {format_date(e.edate)})"
+        # Styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            name="Title",
+            parent=styles["Title"],
+            fontSize=18,
+            leading=22,
+            spaceAfter=10,
+            alignment=1,  # Center alignment
         )
-
-    if fields.get("skills", False):
-        skills = Has.objects.filter(unique_id=profile)
-        add_section(
-            "Skills",
-            skills,
-            lambda s: f"{s.skill_id.skill} (Rating: {s.skill_rating}%)",
-            bullet_points=True,
+        section_header_style = ParagraphStyle(
+            name="SectionHeader",
+            parent=styles["Heading2"],
+            fontSize=14,
+            leading=18,
+            spaceAfter=4,  # Reduce space after section header
+            textColor=colors.HexColor("#c43119"),  # Custom color
         )
+        body_style = styles["BodyText"]
+        body_style.fontSize = 11
+        body_style.leading = 14
 
-    if fields.get("experience", False):
-        experience = Experience.objects.filter(unique_id=profile)
-        add_section(
-            "Experience",
-            experience,
-            lambda e: f"<b>{e.title}</b> at {e.company} ({format_date(e.sdate)} - {format_date(e.edate)})<br/>{e.description or 'No description'}"
-        )
+        # Helper to format dates
+        def format_date(date):
+            return date.strftime("%d %B %Y") if date else "Ongoing"
 
-    if fields.get("projects", False):
-        projects = Project.objects.filter(unique_id=profile)
-        add_section(
-            "Projects",
-            projects,
-            lambda p: f"<b>{p.project_name}</b><br/>{p.summary or 'No description'} (Status: {p.project_status})",
-            bullet_points=True,
-        )
+        # Content container
+        content = []
 
-    if fields.get("courses", False):
-        courses = Course.objects.filter(unique_id=profile)
-        add_section(
-            "Courses",
-            courses,
-            lambda c: f"{c.course_name} - {c.description or 'No description'} (License: {c.license_no or 'N/A'})",
-            bullet_points=True,
-        )
+        # Add dynamic sections with optional bullet points
+        def add_section(title, queryset, formatter, bullet_points=False):
+            content.append(Paragraph(title, section_header_style))
+            # Add a horizontal line under the section header
+            line = Line(0, 0, 500, 0, strokeColor=colors.HexColor("#c43119"))  # Adjust line length
+            drawing = Drawing(500, 1)  # Adjust drawing width
+            drawing.add(line)
+            content.append(drawing)
+            content.append(Spacer(1, 4))  # Reduce space between header and content
 
-    # Build the PDF
-    doc.build(content)
-    buffer.seek(0)
+            if bullet_points:
+                # Add items as a bulleted list
+                items = [Paragraph(formatter(obj), body_style) for obj in queryset]
+                content.append(ListFlowable(
+                    [ListItem(i) for i in items],
+                    bulletType="bullet",  # Use bullets
+                    start="circle",  # Specify bullet style
+                    leftIndent=10,  # Indent for bullets
+                    bulletFontSize=8,  # Decrease bullet size
+                    bulletOffset=10,  # Increase space between bullet and text
+                ))
+            else:
+                # Add items normally
+                for obj in queryset:
+                    content.append(Paragraph(formatter(obj), body_style))
+            content.append(Spacer(1, 8))  # Reduce space between sections
 
-    # Response
-    response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
-    response['Content-Disposition'] = 'attachment; filename="resume.pdf"'
-    return response
+        # Title
+        content.append(Paragraph(f"{user.get_full_name()}", title_style))
+        content.append(Spacer(1, 8))  # Reduce space after title
+
+        # Dynamic Sections
+        if fields.get("achievements", False):
+            achievements = Achievement.objects.filter(unique_id=profile)
+            add_section(
+                "Achievements",
+                achievements,
+                lambda a: f"{a.achievement} ({a.achievement_type}) - {a.issuer} ({format_date(a.date_earned)})",
+                bullet_points=True,
+            )
+
+        if fields.get("education", False):
+            education = Education.objects.filter(unique_id=profile)
+            add_section(
+                "Education",
+                education,
+                lambda e: f"{e.degree} in {e.stream or 'General'} from {e.institute}, Grade: {e.grade} ({format_date(e.sdate)} - {format_date(e.edate)})"
+            )
+
+        if fields.get("skills", False):
+            skills = Has.objects.filter(unique_id=profile)
+            add_section(
+                "Skills",
+                skills,
+                lambda s: f"{s.skill_id.skill} (Rating: {s.skill_rating}%)",
+                bullet_points=True,
+            )
+
+        if fields.get("experience", False):
+            experience = Experience.objects.filter(unique_id=profile)
+            add_section(
+                "Experience",
+                experience,
+                lambda e: f"<b>{e.title}</b> at {e.company} ({format_date(e.sdate)} - {format_date(e.edate)})<br/>{e.description or 'No description'}"
+            )
+
+        if fields.get("projects", False):
+            projects = Project.objects.filter(unique_id=profile)
+            add_section(
+                "Projects",
+                projects,
+                lambda p: f"<b>{p.project_name}</b><br/>{p.summary or 'No description'} (Status: {p.project_status})",
+                bullet_points=True,
+            )
+
+        if fields.get("courses", False):
+            courses = Course.objects.filter(unique_id=profile)
+            add_section(
+                "Courses",
+                courses,
+                lambda c: f"{c.course_name} - {c.description or 'No description'} (License: {c.license_no or 'N/A'})",
+                bullet_points=True,
+            )
+
+        # Build the PDF
+        doc.build(content)
+        buffer.seek(0)
+
+        # Response
+        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        response['Content-Disposition'] = 'attachment; filename="resume.pdf"'
+        return response
 
 @permission_classes([IsAuthenticated]) 
 class ApplyForPlacement(APIView):
@@ -674,3 +677,84 @@ class DownloadStatistics(APIView):
 
         wb.save(response)
         return response
+
+
+@permission_classes([IsAuthenticated])
+class DebarStudents(APIView):
+    def get(self,request):
+        debared_students = DebarStudentInfo.objects.all()
+        data = []
+
+        for stud in debared_students:
+            user = User.objects.get(username=stud.unique_id_id)
+            data.append({
+                'roll_no':stud.unique_id_id,
+                'name':user.first_name,
+                'description':stud.description
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
+    
+
+
+@permission_classes([IsAuthenticated])
+class DebaredDetails(APIView):
+    def get(self,request,id):
+        try:
+            print("entered")
+            user = User.objects.get(username=id)
+            extra_info = ExtraInfo.objects.get(id=id)
+            department = DepartmentInfo.objects.get(id=extra_info.department_id)
+            student = Student.objects.get(id_id=id)
+            debar = DebarStudentInfo.objects.filter(unique_id_id=id).count()
+            print("entered")
+            
+
+            data = {
+                'roll_no':user.username,
+                'name':user.first_name,
+                'email':user.email,
+                'department':department.name,
+                'year': datetime.now().year - student.batch,
+                'programme':student.programme,
+                'debar_status':debar
+            }
+            print(data)
+            
+            return Response(data,status=status.HTTP_200_OK)
+        
+
+        except User.DoesNotExist:
+            return Response({"error": f"Student with id {id} not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+    
+    def post(self,request,id):
+        debar = DebarStudentInfo.objects.filter(unique_id_id=id).count()
+        # print(debar,id)
+        if debar==1:
+            return Response("already present",status=status.HTTP_300_MULTIPLE_CHOICES)
+        
+        roll_no=id
+        description=request.data.get('reason')
+
+        try:
+            obj = DebarStudentInfo.objects.create(
+                unique_id_id=id,
+                description=description,
+            )
+
+            return Response("Successfully debared",status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            print(e)
+            return Response("Failed to debar",status=status.HTTP_300_MULTIPLE_CHOICES)
+        
+    def delete(self,request,id):
+        try:
+            debar = DebarStudentInfo.objects.get(unique_id_id=id)
+            debar.delete()
+
+            return Response("succesfully deleted",status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response("error occured : "+ e )
