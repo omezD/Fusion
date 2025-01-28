@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from ..models import *
 from applications.academic_information.models import Student
-from applications.globals.models import ExtraInfo, DepartmentInfo
+from applications.globals.models import ExtraInfo,DepartmentInfo
 from .serializers import PlacementScheduleSerializer, NotifyStudentSerializer
 from applications.academic_information.api.serializers import StudentSerializers
 from datetime import datetime
@@ -32,37 +32,52 @@ from rest_framework.test import APIRequestFactory
 @permission_classes([IsAuthenticated])
 class PlacementScheduleView(APIView):
 
-    def get(self, request, id=None): 
-        if id:
-            try:
-                notify_schedule = NotifyStudent.objects.get(id=id)
-                placement_schedule = PlacementSchedule.objects.get(notify_id=notify_schedule)
-                combined_entry = {**NotifyStudentSerializer(notify_schedule).data, **PlacementScheduleSerializer(placement_schedule).data}
-                return Response(combined_entry, status=status.HTTP_200_OK)
-            except NotifyStudent.DoesNotExist:
-                return Response({"error": "NotifyStudent not found"}, status=status.HTTP_404_NOT_FOUND)
-            except PlacementSchedule.DoesNotExist:
-                return Response({"error": "PlacementSchedule not found"}, status=status.HTTP_404_NOT_FOUND)
-        else:
-            combined_data = []
-            notify_students = NotifyStudent.objects.all()
-            for notify in notify_students:
-                placements = PlacementSchedule.objects.filter(notify_id=notify.id)
-                placement_serializer = PlacementScheduleSerializer(placements, many=True)
-                notify_data = NotifyStudentSerializer(notify).data
+    def get(self, request):        
+        debar_status = DebarStudentInfo.objects.filter(unique_id_id = request.user.username).count()
+        if debar_status == 1 :
+            return Response([],status=status.HTTP_200_OK)
+        
+        combined_data = []
+        notify_students = NotifyStudent.objects.all()
 
-                for placement in placement_serializer.data:
-                    counting = StudentApplication.objects.filter(schedule_id_id=placement['id'],unique_id_id=request.user.username).count()
-                    role_st = Role.objects.get(id=placement['role'])
-                    check = True
-                    if counting==0:
-                        check=False
-                    combined_entry = {**notify_data, **placement ,'check':check ,'role_st':role_st.role}
-                    combined_data.append(combined_entry)
-            
-            return Response(combined_data, status=status.HTTP_200_OK)
+        if request.user.username != 'omvir' and request.user.username!='anilk':
+            student = Student.objects.get(id_id=request.user.username)
+        extra_info = ExtraInfo.objects.get(id=request.user.username)
+        cur_gender = "Female"
+        if extra_info.sex == 'M':
+            cur_gender='Male'
+            # implemented eligibility
+        for notify in notify_students:
+            placements = PlacementSchedule.objects.filter(notify_id=notify.id)
+            if request.user.username != 'omvir' and request.user.username!='anilk':
+                print('entered')
+                eligibility = Eligibility.objects.get(company_id_id = notify.id)
+                if eligibility.cpi > student.cpi:
+                    print(eligibility.cpi,student.cpi)
+                    continue
+                if eligibility.gender!='All' and eligibility.gender!=cur_gender:
+                    print(eligibility.gender,cur_gender)
+                    continue
+                if student.batch+4!=eligibility.passout_year and eligibility.passout_year!=-1:
+                    print(student.batch+4,eligibility.passout_year)
+                    continue
+            print('entered')
+            placement_serializer = PlacementScheduleSerializer(placements, many=True)
+            notify_data = NotifyStudentSerializer(notify).data
+
+            for placement in placement_serializer.data:
+                counting = StudentApplication.objects.filter(schedule_id_id=placement['id'],unique_id_id=request.user.username).count()
+                role_st = Role.objects.get(id=placement['role'])
+                check = True
+                if counting==0:
+                    check=False
+                combined_entry = {**notify_data, **placement ,'check':check ,'role_st':role_st.role}
+                combined_data.append(combined_entry)
+        
+        return Response(combined_data, status=status.HTTP_200_OK)
         
     def post(self, request):
+        print(request.data)
         placement_type = request.data.get("placement_type")
         company_name = request.data.get("company_name")
         ctc = request.data.get("ctc")
@@ -72,6 +87,10 @@ class PlacementScheduleView(APIView):
         location = request.data.get("location")
         role = request.data.get("role")
         resume = request.FILES.get("resume")
+        cpi = request.data.get("cpi")
+        branch = request.data.get("branch")
+        gender = request.data.get("gender")
+        passout = request.data.get("passoutyr")
 
         try:
             role_create, _ = Role.objects.get_or_create(role=role)
@@ -92,6 +111,14 @@ class PlacementScheduleView(APIView):
                 role=role_create,
                 location=location,
                 time=schedule_at,
+            )
+
+            eligibility = Eligibility.objects.create(
+                company_id = notify,
+                cpi = cpi,
+                branch=branch,
+                gender=gender,
+                passout_year=passout,
             )
 
             return JsonResponse({"message": "Successfully Added Schedule"}, status=201)
@@ -157,9 +184,9 @@ class BatchStatisticsView(APIView):
     def get(self, request):
         combined_data = []
         student_records = StudentRecord.objects.all()
-
+        print("entered")
         if not student_records.exists():
-            return Response({"error": "No student records found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "No student records found"}, status=status.HTTP_204_NO_CONTENT)
 
         for student in student_records:
             try:
@@ -758,3 +785,86 @@ class DebaredDetails(APIView):
         
         except Exception as e:
             return Response("error occured : "+ e )
+        
+
+@permission_classes([IsAuthenticated])
+class FieldsAddition(APIView):
+    def post(self,request):
+        try :
+            field = CustomField.objects.create(
+                field_name = request.data.get('name'),
+                field_type = request.data.get('type'),
+                required = True if request.data.get('required') == 'Yes' else False
+            )
+
+            return Response("Successfully created",status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response("Failed to create",status=status.HTTP_406_NOT_ACCEPTABLE)
+
+    def get(self,request):
+        try:
+            data = []
+            fields = CustomField.objects.all()
+            # print(fields)
+            for field in fields:
+                data.append({
+                    'name':field.field_name,
+                    'type':field.field_type,
+                    'required':field.required,
+                })
+            print(data)
+            return Response(data,status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response("error occured",status=status.HTTP_406_NOT_ACCEPTABLE)
+        
+
+@permission_classes([IsAuthenticated])
+class GlobalRestriction(APIView):
+    def post(self,request):
+        try:
+            check = GlobalRestrictions.objects.filter(criteria = request.data['criteria'],
+                                                            condition = request.data['condition'],
+                                                            value = request.data['value']).count()
+            if check>0: 
+                return Response("Already exists",status=status.HTTP_207_MULTI_STATUS)
+            print(request.data)
+            restriction = GlobalRestrictions.objects.create(
+                criteria=request.data['criteria'],
+                condition=request.data['condition'],
+                value=request.data['value'],
+                description=request.data['description']
+            )
+
+            return Response("successfully created",status=status.HTTP_200_OK)
+        except Exception as e:
+            print(e)
+            return Response("failed to add",status=status.HTTP_406_NOT_ACCEPTABLE)
+    
+    def get(self,request):
+        try:
+            data = []
+            restrictions = GlobalRestrictions.objects.all()
+            # print(Restrictions)
+            for restriction in restrictions:
+                data.append({
+                    'criteria':restriction.criteria,
+                    'condition':restriction.condition,
+                    'value':restriction.value,
+                    'description':restriction.description,
+                })
+            print(data)
+            return Response(data,status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response("failed to add",status=status.HTTP_204_NO_CONTENT)
+    
+
+    # def put(self,request):
+    #     restriction = GlobalRestrictions.objects.get(criteria = request.data.criteria,
+    #                                                 condition = request.data.condition,
+    #                                                 value = request.data.value)
+        
+
+    # have to write for put and delete

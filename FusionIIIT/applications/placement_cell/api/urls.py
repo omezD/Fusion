@@ -17,4 +17,6 @@ urlpatterns = [
     path('download-statistics/',DownloadStatistics.as_view()),
     path('debared-students/',DebarStudents.as_view()),
     path('debared-status/<str:id>/',DebaredDetails.as_view()),
+    path('add-field/',FieldsAddition.as_view()),
+    path('restrictions/',GlobalRestriction.as_view()),
 ]
